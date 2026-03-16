@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Clade declaration — part of the gv-clade-index registry
+# See: https://github.com/hyperpolymath/gv-clade-index
+
+[identity]
+uuid = "bd4e3437-a1c1-595a-9dbb-bf4ecc6dd4d9"
+primary-forge = "github"
+primary-owner = "hyperpolymath"
+canonical-name = "SiliconCore.jl"
+prefixed-name = "dx-SiliconCore.jl"
+
+[clade]
+primary = "dx"
+secondary = []
+assigned = "2026-03-16"
+rationale = ""
+
+[forges]
+github = "hyperpolymath/SiliconCore.jl"
+gitlab = "hyperpolymath/SiliconCore.jl"
+bitbucket = "hyperpolymath/SiliconCore.jl"
+
+[lineage]
+type = "standalone"
+parent = "Julia package — hardware abstraction"
+born = "2026-03-16"
