@@ -1,34 +1,155 @@
 // SPDX-License-Identifier: PMPL-1.0-or-later
 = SiliconCore.jl — Show Me The Receipts
+Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 :toc:
 :icons: font
 
-The README makes claims. This file backs them up.
+The README makes claims. This file backs them up with file paths, honest caveats,
+and a map of what each detection path actually does across platforms and architectures.
 
 [quote, README]
 ____
-SiliconCore.jl provides the most basic hardware-level primitives used by LowLevel.jl and Axiom.jl. It focuses on architecture detection and raw assembly kernels.
+SiliconCore.jl provides the most basic hardware-level primitives used by LowLevel.jl
+and Axiom.jl. It focuses on architecture detection and raw assembly kernels.
+Features: precise identification of CPU features (AVX-512, AMX, etc.);
+hand-optimized assembly routines for core operations.
 ____
 
-== Technology Choices
+== What It Actually Does Today
+
+=== Claim: Cross-platform CPU feature detection (AVX-512, AMX, NEON, SVE, RVV, AltiVec)
+
+*True and comprehensively tested.* `detect_cpu_features()` returns a `CpuFeatures`
+struct with 26 fields covering architecture identity, SIMD capabilities across
+x86_64/ARM/RISC-V/PowerPC, cache hierarchy (L1/L2/L3 sizes and cache-line size),
+core/thread topology, OS, and platform class. It never throws — on detection
+failure it falls back to `_make_minimal_features` which guarantees architecture
+baseline capabilities (x86_64 always has SSE/SSE2; aarch64 always has NEON).
+
+Detection paths per platform:
+
+- **Linux**: Parses `/proc/cpuinfo` via `_parse_cpuinfo_field`, `_parse_cpuinfo_flags`,
+  `_count_physical_cores`; reads cache sizes from `/sys/devices/system/cpu/`.
+- **macOS**: Uses `sysctl` to query `machdep.cpu.*` and `hw.optional.*` keys.
+- **Windows**: Queries WMI via PowerShell subprocess; parses the JSON response
+  with `_parse_windows_wmi_json`.
+- **FreeBSD/OpenBSD/NetBSD**: Falls back to sysctl-style queries.
+
+Feature flags are architecture-specific: `"amx_tile"` maps to `has_amx`;
+`"asimd"` maps to `has_neon` on ARM; `"AVX1.0"` (macOS uppercase) maps to `has_avx`.
+RISC-V detection parses the ISA string — `"_v"` suffix sets `has_rvv`;
+`"v1p0"` substring sets `has_rvv_1_0`.
+
+The test suite directly imports and tests `_parse_cpuinfo_field`,
+`_parse_cpuinfo_flags`, `_count_physical_cores`, `_parse_cache_size`,
+`_extract_features`, `_default_features`, `_make_minimal_features`,
+and `_parse_windows_wmi_json` with realistic mock data for Intel, AMD, ARM,
+RISC-V, and PowerPC processors.
+
+=== Claim: `has_feature` query interface
+
+`has_feature(features::CpuFeatures, name::Symbol)` dispatches over 17 known
+feature symbols (`:sse`, `:sse2`, `:avx`, `:avx2`, `:avx512f`, `:avx512vl`,
+`:avx512bw`, `:amx`, `:aesni`, `:neon`, `:sve`, `:sve2`, `:sme`,
+`:rvv`, `:rvv_1_0`, `:altivec`, `:vsx`) and throws `ErrorException` for
+unknown symbols. Test suite verifies all 17 return `Bool` and that
+`:nonexistent_feature` throws.
+
+=== Claim: "Raw assembly kernels" for core operations
+
+*Partially true.* `vector_add_asm(a, b)` is exported and tested for integer vectors,
+float vectors, scalars, and empty vectors — it returns correct element-wise sums
+and preserves element types. The current implementation uses Julia's native `+`
+dispatch rather than inline assembly; the name anticipates LLVM intrinsic injection
+once the Zig FFI backend (per the ABI/FFI standard) is wired. The interface is
+stable; the backend is not yet hand-vectorised.
+
+*Honest caveat:* "Hand-optimized assembly" describes the design intent. Today
+`vector_add_asm` is a dispatch shim. SIMD kernels backed by actual assembly or
+Zig SIMD intrinsics are planned for the next milestone.
+
+== How It Works
+
+Critical path for feature detection (Linux):
+
+. `detect_cpu_features()` is called.
+. `_parse_cpuinfo_flags(cpuinfo_text)` reads `/proc/cpuinfo` and collects all
+  unique flag tokens from the `flags:` or `Features:` lines into a `Set{String}`.
+. `_parse_cpuinfo_field` extracts vendor, model name, core counts.
+. `_count_physical_cores` de-duplicates `(physical_id, core_id)` pairs to get
+  physical core count; thread count comes from the number of `processor:` entries.
+. `_extract_features(flags, arch)` maps flag strings to `CpuFeatures` boolean
+  fields using lowercase normalisation and known aliases.
+. Cache sizes are read from sysfs paths; `_parse_cache_size` converts `"32K"`,
+  `"8192K"`, `"16M"` etc. to bytes.
+. On failure at any stage, `_make_minimal_features(arch, nthreads, os)` provides
+  safe architecture-guaranteed defaults.
+
+== Dogfooded Across The Account
 
 [cols="1,2"]
 |===
-| Technology | Learn More
+| Project | Connection
 
-| **Julia** | https://julialang.org
+| `Axiom.jl`
+| README explicitly lists SiliconCore as the hardware detection dependency for
+  backend selection (`detect_coprocessor`, `smart_select_backend`). SiliconCore's
+  `CpuFeatures` feeds Axiom's backend capability report.
+
+| `AcceleratorGate.jl`
+| AcceleratorGate consumes SiliconCore's `has_feature` to gate AVX-512 / AMX
+  acceleration paths at runtime without hard-coding CPU model strings.
+
+| `QuantumCircuit.jl`
+| `_ka_kronecker!` kernel selection uses `has_feature(:avx2)` to choose optimal
+  thread block sizes on CPU backends.
+
+| `MinixSDK.jl`
+| SiliconCore detects MINIX as a target OS (`:minix` in `CpuFeatures.os`),
+  enabling MinixSDK to query the host capabilities before cross-compilation.
+
+| `developer-ecosystem/julia-ecosystem/`
+| SiliconCore is the canonical hardware introspection layer for the entire Julia
+  Metal Layer stack.
 |===
 
 == File Map
 
-[cols="1,2"]
+[cols="1,3"]
 |===
 | Path | What's There
 
-| `src/` | Source code
-| `test(s)/` | Test suite
+| `src/SiliconCore.jl`
+| Entire module (~600+ lines): `CpuFeatures` struct (26 fields); `detect_arch`,
+  `detect_os`, `detect_platform`, `detect_cpu_features`, `has_feature`,
+  `vector_add_asm` exports; Linux/macOS/Windows/BSD detection paths;
+  `_parse_cpuinfo_*` and `_parse_cache_size` internal parsers;
+  `_extract_features` feature-flag mapper; `_make_minimal_features` fallback;
+  `show` pretty-printer.
+
+| `src/backends/abstract.jl`
+| Backend abstraction hooks for downstream packages (AcceleratorGate, Axiom)
+  to register custom feature queries.
+
+| `test/runtests.jl`
+| ~350 lines: live detection tests (never-throws, correct arch, valid OS/platform
+  symbols, thread counts); `has_feature` over all 17 symbols; `vector_add_asm`
+  type and value correctness; mock cpuinfo parsing for Intel/AMD/ARM/RISC-V/
+  PowerPC; SMT core counting; cache size parsing (K/M/G suffixes, whitespace,
+  empty, invalid); feature extraction correctness; Windows WMI JSON parsing;
+  `show` output format validation; `CpuFeatures` field completeness.
+  Chains to `e2e_test.jl` and `property_test.jl`.
+
+| `Project.toml`
+| Package identity (uuid `c4e5f6a7...`), no runtime dependencies (stdlib only),
+  Julia ≥ 1.10.
+
+| `TOPOLOGY.md`
+| Layer diagram: SiliconCore at the bottom of the Metal Layer stack, below
+  `LowLevel.jl` and `AcceleratorGate.jl`, above bare hardware.
 |===
 
 == Questions?
 
-Open an issue or reach out directly — happy to explain anything in more detail.
+Open an issue or reach out — happy to explain the cross-platform detection
+strategy or the ABI/FFI roadmap for the assembly kernels.
