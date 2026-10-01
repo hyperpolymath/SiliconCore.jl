@@ -232,10 +232,11 @@ end
     _safe_read_cmd(cmd; default="") -> String
 
 Run a command and return its stripped output, or `default` on any failure.
+Suppress stderr because optional platform probes may report unsupported keys.
 """
 function _safe_read_cmd(cmd; default::String="")::String
     try
-        return strip(read(cmd, String))
+        return strip(read(pipeline(cmd; stderr=devnull), String))
     catch
         return default
     end
@@ -433,12 +434,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _extract_features(flags::Set{String}, arch::Symbol) -> NamedTuple
+    _extract_features(flags::Set{<:AbstractString}, arch::Symbol) -> NamedTuple
 
 Given a set of feature flag strings and the CPU architecture, return a
 NamedTuple with all boolean feature fields.
 """
-function _extract_features(flags::Set{String}, arch::Symbol)
+function _extract_features(flags::Set{<:AbstractString}, arch::Symbol)
     # x86_64 features
     has_sse = "sse" in flags || "SSE" in flags
     has_sse2 = "sse2" in flags || "SSE2" in flags
@@ -638,12 +639,7 @@ end
 Check a macOS/BSD sysctl boolean key (returns 1 or 0). Returns false on failure.
 """
 function _sysctl_bool(key::String)::Bool
-    try
-        val = strip(read(`sysctl -n $key`, String))
-        return val == "1"
-    catch
-        return false
-    end
+    return _safe_read_cmd(`sysctl -n $key`) == "1"
 end
 
 """

@@ -13,7 +13,7 @@ using .SiliconCore
 import .SiliconCore:
     _parse_cpuinfo_field, _parse_cpuinfo_flags, _count_physical_cores,
     _parse_cache_size, _extract_features, _default_features,
-    _make_minimal_features, _parse_windows_wmi_json
+    _make_minimal_features, _parse_windows_wmi_json, _safe_read_cmd
 
 @testset "SiliconCore.jl" begin
 
@@ -320,6 +320,16 @@ import .SiliconCore:
     # Internal: Feature extraction
     # -----------------------------------------------------------------------
 
+    @testset "optional command probes are quiet" begin
+        julia = Base.julia_cmd()
+        success = `$(julia) --startup-file=no -e 'println("  supported  ")'`
+        @test _safe_read_cmd(success) == "supported"
+
+        failure = `$(julia) --startup-file=no -e 'println(stderr, "unknown optional key"); print("partial"); exit(1)'`
+        result = @test_nowarn _safe_read_cmd(failure; default="unavailable")
+        @test result == "unavailable"
+    end
+
     @testset "feature extraction — x86_64 flags" begin
         flags = Set(["sse", "sse2", "avx", "avx2", "avx512f", "avx512vl",
                      "avx512bw", "aes", "amx_tile"])
@@ -341,13 +351,28 @@ import .SiliconCore:
 
     @testset "feature extraction — macOS uppercase flags" begin
         # macOS sysctl returns uppercase feature names
-        flags = Set(["SSE", "SSE2", "AVX1.0", "AVX2", "AES", "NEON"])
+        flags = Set(split("SSE SSE2 AVX1.0 AVX2 AES NEON"))
         feat = _extract_features(flags, :x86_64)
         @test feat.has_sse
         @test feat.has_sse2
         @test feat.has_avx   # "AVX1.0" maps to AVX
         @test feat.has_avx2
         @test feat.has_aesni
+    end
+
+    @testset "feature extraction — macOS empty flags and Apple Silicon" begin
+        # Optional sysctl keys can be absent; split still produces SubStrings.
+        flags = Set(split("   "))
+        @test _extract_features(flags, :aarch64) == _default_features()
+
+        # The macOS backend adds mandatory NEON and optional ARM features.
+        push!(flags, "NEON", "SME")
+        feat = _extract_features(flags, :aarch64)
+        @test feat.has_neon
+        @test feat.has_sme
+        @test !feat.has_sve
+        @test !feat.has_sve2
+        @test !feat.has_sse
     end
 
     @testset "feature extraction — ARM flags" begin
