@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
 name = "SiliconCore"
-uuid = "c4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a"
+uuid = "01a11d29-d88c-832a-9ded-976af4b7dc75"
 authors = ["Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>"]
-version = "0.1.0"
+version = "0.1.1"
 license = "MPL-2.0"
 
 [compat]
